@@ -252,34 +252,42 @@ static void uart_receive_task(void *pvParameters)
 
                 // In the case of other commands, we just copy data into the buffer
                 // until we get the prompt again.
-                prompt_pos = strstr((char *)dtmp, "UCCM>");
+                memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
+                cmd_buffer_index += event.size;
+
+                prompt_pos = strstr(cmd_buffer, "UCCM> ");
                 if (prompt_pos != NULL)
                 {
-                    memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
-                    cmd_buffer_index += event.size;
-
-                    char *cmd_data = malloc(cmd_buffer_index + 1);
-                    bzero(cmd_data, cmd_buffer_index + 1);
-                    memcpy(cmd_data, cmd_buffer, cmd_buffer_index);
-                    if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
+                    char *cmd_start = cmd_buffer;
+                    // This loop is a trick to split the commands when more than one is received at once and
+                    // send them individually to be processed by the task.
+                    while (prompt_pos != NULL)
                     {
-                        ESP_LOGE(TAG, "Error sending data to cmd queue");
+                        size_t len = prompt_pos - cmd_start;
+                        char *cmd_data = malloc(len + 1);
+                        bzero(cmd_data, len + 1);
+                        memcpy(cmd_data, cmd_start, len);
+                        if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
+                        {
+                            ESP_LOGE(TAG, "Error sending data to cmd queue");
+                        }
+                        cmd_start += len + 6;
+                        prompt_pos = strstr(cmd_start, "UCCM> ");
                     }
-                    cmd_buffer_index = 0;
-                    // Zero out the buffer to prevent nastiness
-                    bzero(cmd_buffer, CMD_BUFFER_SIZE);
-                    break;
-                }
-                else
-                {
-                    
+                    // Sometimes we get partial commands that don't have the UCCM> part yet, so we get a remaining part.
+                    // This copies the remaining to the start of the array, sets the array index to the length of the remain
+                    // and zero out the rest.
+                    // That way, when we receive the rest, we can still process it as a command.
+                    memcpy(cmd_buffer, cmd_start, strlen(cmd_start));
+                    cmd_buffer_index = strlen(cmd_start);
+                    bzero(&(cmd_buffer[cmd_buffer_index]), CMD_BUFFER_SIZE - cmd_buffer_index);
                     break;
                 }
 
                 break;
             //Event of HW FIFO overflow detected
             case UART_FIFO_OVF:
-                ESP_LOGI(TAG, "hw fifo overflow");
+                ESP_LOGW(TAG, "hw fifo overflow");
                 // If fifo overflow happened, you should consider adding flow control for your application.
                 // The ISR has already reset the rx FIFO,
                 // As an example, we directly flush the rx buffer here in order to read more data.
@@ -288,7 +296,7 @@ static void uart_receive_task(void *pvParameters)
                 break;
             //Event of UART ring buffer full
             case UART_BUFFER_FULL:
-                ESP_LOGI(TAG, "ring buffer full");
+                ESP_LOGW(TAG, "ring buffer full");
                 // If buffer full happened, you should consider increasing your buffer size
                 // As an example, we directly flush the rx buffer here in order to read more data.
                 uart_flush_input(ECHO_UART_PORT_NUM);
@@ -300,33 +308,13 @@ static void uart_receive_task(void *pvParameters)
                 break;
             //Event of UART parity check error
             case UART_PARITY_ERR:
-                ESP_LOGI(TAG, "uart parity error");
+                ESP_LOGW(TAG, "uart parity error");
                 break;
             //Event of UART frame error
             case UART_FRAME_ERR:
-                ESP_LOGI(TAG, "uart frame error");
+                ESP_LOGW(TAG, "uart frame error");
                 break;
                 //UART_PATTERN_DET
-            case UART_PATTERN_DET:
-                uart_get_buffered_data_len(ECHO_UART_PORT_NUM, &buffered_size);
-                int pos = uart_pattern_pop_pos(ECHO_UART_PORT_NUM);
-                ESP_LOGI(TAG, "[UART PATTERN DETECTED] pos: %d, buffered size: %d", pos, buffered_size);
-                if (pos == -1)
-                {
-                    // There used to be a UART_PATTERN_DET event, but the pattern position queue is full so that it can not
-                    // record the position. We should set a larger queue size.
-                    // As an example, we directly flush the rx buffer here.
-                    uart_flush_input(ECHO_UART_PORT_NUM);
-                }
-                else
-                {
-                    uart_read_bytes(ECHO_UART_PORT_NUM, dtmp, pos, 100 / portTICK_PERIOD_MS);
-                    uint8_t pat[2];
-                    memset(pat, 0, sizeof(pat));
-                    uart_read_bytes(ECHO_UART_PORT_NUM, pat, 1, 100 / portTICK_PERIOD_MS);
-                    // ESP_LOGI(TAG, "read data: %s", dtmp);
-                }
-                break;
             //Others
             default:
                 break;
@@ -355,7 +343,7 @@ static void uart_init()
         .source_clk = UART_SCLK_APB,
     };
     //Install UART driver, and get the queue.
-    ESP_ERROR_CHECK(uart_driver_install(ECHO_UART_PORT_NUM, TOD_BUFFER_SIZE * 2, TOD_BUFFER_SIZE * 2, 20, &queue_uart2, 0));
+    ESP_ERROR_CHECK(uart_driver_install(ECHO_UART_PORT_NUM, CMD_BUFFER_SIZE * 2, CMD_BUFFER_SIZE * 2, 20, &queue_uart2, 0));
     ESP_ERROR_CHECK(uart_param_config(ECHO_UART_PORT_NUM, &uart_config));
 
     //Set UART pins (using UART0 default pins ie no changes.)
