@@ -1,12 +1,7 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
-static void uart_receive_task(void *pvParameters);
-static void tod_parse_task(void *pvParameters);
-static void cmd_parse_task(void *pvParameters);
-static void update_display_task(void *pvParameters);
-static void uart_init();
-static void display_init();
+
 void initialize_uccm();
 void statScreen();
 void monitorScreen();
@@ -27,6 +22,10 @@ typedef struct
 // Struct that holds the status data for the GPSDO
 typedef struct
 {
+    char manufacturer[10];
+    char model[10];
+    char serial_number[10];
+    char version[10];
     float temperature;
     float dac;
     float phase;

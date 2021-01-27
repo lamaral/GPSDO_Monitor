@@ -20,8 +20,15 @@
 #define TOD_BUFFER_SIZE (512)
 #define ECHO_UART_PORT_NUM (UART_NUM_2)
 
+static void uart_receive_task(void *pvParameters);
+static void tod_parse_task(void *pvParameters);
+static void cmd_parse_task(void *pvParameters);
+static void update_display_task(void *pvParameters);
+static void uart_init();
+static void display_init();
+
 // Used for debug output
-static const char *TAG = "xableta";
+static const char *TAG = "main";
 
 // The object for the GLCD display
 u8g2_t u8g2;
@@ -36,6 +43,8 @@ RingbufHandle_t buf_handle;
 
 // Object that holds the state of the GPSDO
 gpsdo_state_t gpsdo_state = {
+    .manufacturer = "",
+    .serial_number = "",
     .temperature = 0.0,
     .dac = 0.0,
     .phase = 0.0,
@@ -89,11 +98,32 @@ void app_main()
 static void cmd_parse_task(void *pvParameters)
 {
     char *cmd_data;
+    char *lf_pos = NULL;
+    char *complete_pos = NULL;
     for (;;)
     {
         if (xQueueReceive(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY))
         {
-            ESP_LOGI(TAG, "cmd data: %s", cmd_data);
+            // ESP_LOGI(TAG, "cmd data: %s", cmd_data);
+            lf_pos = strstr(cmd_data, "\r\n");
+            complete_pos = strstr(cmd_data, "\"Command Complete\"");
+            if (lf_pos != NULL)
+            {
+                size_t len_cmd = lf_pos - cmd_data;
+                size_t len_data = complete_pos - (lf_pos + 3);
+                char *command = malloc(len_cmd + 1);
+                char *data = malloc(len_data + 1);
+                bzero(command, len_cmd + 1);
+                bzero(data, len_data + 1);
+                memcpy(command, cmd_data, len_cmd);
+                memcpy(data, (lf_pos + 3), len_data - 2);
+                // Parse the received command result
+                ESP_LOGI(TAG, "data before: %p", data);
+                parse_command(gpsdo_state, command, data);
+                ESP_LOGI(TAG, "data after: %p", data);
+                free(command);
+                free(data);
+            }
             free(cmd_data);
             cmd_data = NULL;
         }
@@ -186,7 +216,6 @@ static void update_display_task(void *pvParameters)
 static void uart_receive_task(void *pvParameters)
 {
     uart_event_t event;
-    size_t buffered_size;
     uint8_t *dtmp = (uint8_t *)malloc(TOD_BUFFER_SIZE);
     char *cmd_buffer = malloc(CMD_BUFFER_SIZE);
     char *tod_buffer = malloc(TOD_BUFFER_SIZE);
@@ -379,7 +408,7 @@ void uccmDataScreen()
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
     u8g2_DrawStr(&u8g2, 0, 7, "UCCM: Samsung");
-    u8g2_DrawStr(&u8g2, 0, 15, "SN:S3ZB220090,1.0.0.5");
+    u8g2_DrawStr(&u8g2, 0, 15, "SN: S3ZB220090,1.0.0.5");
     u8g2_DrawStr(&u8g2, 0, 23, "Temp: 43.162C");
     u8g2_DrawStr(&u8g2, 0, 31, "DAC: -8.0940 %");
     u8g2_DrawStr(&u8g2, 0, 39, "Phase: +15.70ns");
