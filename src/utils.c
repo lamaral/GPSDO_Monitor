@@ -38,7 +38,7 @@ unsigned long hash(const char *str)
     return hash;
 }
 
-void parse_command(gpsdo_state_t gpsdo_status, char *command, char *data)
+void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
 {
     char *data_ptr = data;
     // This is a dirty hack to have a switch for a string.
@@ -46,27 +46,71 @@ void parse_command(gpsdo_state_t gpsdo_status, char *command, char *data)
     switch (hash(command))
     {
     case 186661001: /* *IDN? */
-        strcpy(gpsdo_status.manufacturer, strsep(&data_ptr, ","));
-        strcpy(gpsdo_status.model, strsep(&data_ptr, ","));
-        strcpy(gpsdo_status.serial_number, strsep(&data_ptr, ","));
-        strcpy(gpsdo_status.version, strsep(&data_ptr, ","));
-        ESP_LOGD(TAG, "Brand: %s", gpsdo_status.manufacturer);
-        ESP_LOGD(TAG, "Model: %s", gpsdo_status.model);
-        ESP_LOGD(TAG, "Serial: %s", gpsdo_status.serial_number);
-        ESP_LOGD(TAG, "Version: %s", gpsdo_status.version);
+        strncpy(gpsdo_status->manufacturer, strsep(&data_ptr, ","), 10);
+        strncpy(gpsdo_status->model, strsep(&data_ptr, ","), 10);
+        strncpy(gpsdo_status->serial_number, strsep(&data_ptr, ","), 10);
+        strncpy(gpsdo_status->version, strsep(&data_ptr, ","), 10);
+        ESP_LOGD(TAG, "Brand: %s", gpsdo_status->manufacturer);
+        ESP_LOGD(TAG, "Model: %s", gpsdo_status->model);
+        ESP_LOGD(TAG, "Serial: %s", gpsdo_status->serial_number);
+        ESP_LOGD(TAG, "Version: %s", gpsdo_status->version);
         break;
     case 4019269066: /* ALARM:HARD? */
+        strncpy(gpsdo_status->alarm_hw, data, 10);
+        ESP_LOGD(TAG, "H/W Alarm: %s", gpsdo_status->alarm_hw);
         break;
     case 4028095873: /* ALARM:OPER? */
+        strncpy(gpsdo_status->alarm_op, data, 10);
+        ESP_LOGD(TAG, "Oper Alarm: %s", gpsdo_status->alarm_op);
         break;
-    case 1659745101: /* DIAG:LOOP? */
+    case 1659745101: /* DIAG:LOOP? OCXO is loop Frequency offset*/
         break;
-    case 3721428495: /* DIAG:ROSC:EFC:REL? */
+    case 3721428495: /* DIAG:ROSC:EFC:REL? AC in percentage */
         break;
-    case 2531318246: /* DIAG:ROSC:EFC:DATA? */
+    case 2531318246: /* DIAG:ROSC:EFC:DATA? Unknown*/
         break;
     case 3591062394: /* GPS:POS? */
+    {
+        double sign = 0.0;
+        double lat = 0.0;
+        double lon = 0.0;
+        double alt = 0.0;
+        char letter;
+        // Parse latitude
+        letter = strsep(&data_ptr, ",")[0];
+        sign = 1.0;
+        if (letter == 'S')
+            sign = -1.0;
+        else
+            sign = 1.0;
+        lat = atof(strsep(&data_ptr, ","));
+        lat += atof(strsep(&data_ptr, ",")) / 60.0;
+        lat += atof(strsep(&data_ptr, ",")) / 3600.0;
+        lat *= sign;
+
+        // Parse longitude
+        letter = strsep(&data_ptr, ",")[0];
+        if (letter == 'W')
+            sign = -1.0;
+        else
+            sign = 1.0;
+        lon = atof(strsep(&data_ptr, ","));
+        lon += atof(strsep(&data_ptr, ",")) / 60.0;
+        lon += atof(strsep(&data_ptr, ",")) / 3600.0;
+        lon *= sign;
+
+        // Parse height
+        alt = atof(strsep(&data_ptr, ","));
+
+        gpsdo_status->latitude = lat;
+        gpsdo_status->longitude = lon;
+        gpsdo_status->altitude = lat;
+
+        ESP_LOGD(TAG, "Lat: %f", lat);
+        ESP_LOGD(TAG, "Lon: %f", lon);
+        ESP_LOGD(TAG, "Alt: %f", alt);
         break;
+    }
     case 868344969: /* LED:GPSL? */
         break;
     case 1130846626: /* OUTP:STAT? */

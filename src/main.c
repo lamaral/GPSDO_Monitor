@@ -56,8 +56,8 @@ gpsdo_state_t gpsdo_state = {
     .status_gps = 0,
     .status_pos = 0,
     .status_opr = 0,
-    .alarm_hw = 0,
-    .alarm_op = 0,
+    .alarm_hw = "",
+    .alarm_op = "",
     .week = 0,
     .tow = 0,
     .utc_offset = 0,
@@ -71,7 +71,7 @@ void (*screen_functions[4])(void) = {&monitorScreen, &uccmDataScreen, &satellite
 
 void app_main()
 {
-    // display_init();
+    display_init();
     uart_init();
 
     // initialize_uccm();
@@ -90,7 +90,7 @@ void app_main()
     }
     xTaskCreate(cmd_parse_task, "cmd_parse_task", 10240, NULL, 2, NULL);
 
-    // xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
+    xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
 
     xTaskCreate(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL);
 }
@@ -118,9 +118,7 @@ static void cmd_parse_task(void *pvParameters)
                 memcpy(command, cmd_data, len_cmd);
                 memcpy(data, (lf_pos + 3), len_data - 2);
                 // Parse the received command result
-                ESP_LOGI(TAG, "data before: %p", data);
-                parse_command(gpsdo_state, command, data);
-                ESP_LOGI(TAG, "data after: %p", data);
+                parse_command(&gpsdo_state, command, data);
                 free(command);
                 free(data);
             }
@@ -142,7 +140,7 @@ static void tod_parse_task(void *pvParameters)
     {
         if (xQueueReceive(queue_tod, &tod_data, (portTickType)portMAX_DELAY))
         {
-            ESP_LOGD(TAG, "TOD data: %s", tod_data);
+            // ESP_LOGI(TAG, "TOD data: %s", tod_data);
             s = strstr(tod_data, "c5 ");
             if (s == 0)
                 goto go_back;
@@ -401,29 +399,34 @@ static void display_init()
 
 void uccmDataScreen()
 {
-    // u8g2_FirstPage(&u8g2);
-    // do
-    // {
+    char *holder = malloc(24 * sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
-    u8g2_DrawStr(&u8g2, 0, 7, "UCCM: Samsung");
-    u8g2_DrawStr(&u8g2, 0, 15, "SN: S3ZB220090,1.0.0.5");
-    u8g2_DrawStr(&u8g2, 0, 23, "Temp: 43.162C");
-    u8g2_DrawStr(&u8g2, 0, 31, "DAC: -8.0940 %");
-    u8g2_DrawStr(&u8g2, 0, 39, "Phase: +15.70ns");
-    u8g2_DrawStr(&u8g2, 0, 47, "PPS: +10.3000ns");
-    u8g2_DrawStr(&u8g2, 0, 55, "FREQ DIFF:N/A");
-    u8g2_DrawStr(&u8g2, 0, 63, "TFOM: 2 FFOM: Stable");
+    sprintf(holder, "UCCM:%.10s %.7s", gpsdo_state.manufacturer, gpsdo_state.model);
+    u8g2_DrawStr(&u8g2, 0, 7, holder);
+    sprintf(holder, "SN:%.10s,%.9s", gpsdo_state.serial_number, gpsdo_state.version);
+    u8g2_DrawStr(&u8g2, 0, 15, holder);
+    sprintf(holder, "Temp:%6.3f", gpsdo_state.temperature);
+    u8g2_DrawStr(&u8g2, 0, 23, holder);
+    sprintf(holder, "DAC:%+7.4f %%", gpsdo_state.dac);
+    u8g2_DrawStr(&u8g2, 0, 31, holder);
+    sprintf(holder, "Phase:%+5.2fns", gpsdo_state.phase);
+    u8g2_DrawStr(&u8g2, 0, 39, holder);
+    sprintf(holder, "PPS:%+7.4fns", gpsdo_state.pps);
+    u8g2_DrawStr(&u8g2, 0, 47, holder);
+    sprintf(holder, "FREQ DIFF:%5.2f", gpsdo_state.freq_diff);
+    u8g2_DrawStr(&u8g2, 0, 55, holder);
+    sprintf(holder, "TFOM:%d FFOM:%d", gpsdo_state.tfom, gpsdo_state.ffom);
+    u8g2_DrawStr(&u8g2, 0, 63, holder);
     u8g2_SendBuffer(&u8g2);
-    // } while (u8g2_NextPage(&u8g2));
+    free(holder);
+    holder = NULL;
 }
 
 void monitorScreen()
 {
-    // u8g2_FirstPage(&u8g2);
-    // do
-    // {
+    char *holder = malloc(24 * sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
@@ -439,10 +442,13 @@ void monitorScreen()
     u8g2_DrawStr(&u8g2, 63, 15, "25 Apr 2020");
     u8g2_DrawStr(&u8g2, 81, 39, "|Alarm");
     u8g2_DrawStr(&u8g2, 81, 47, "|------");
-    u8g2_DrawStr(&u8g2, 81, 55, "|HW:NONE");
-    u8g2_DrawStr(&u8g2, 81, 63, "|OP:NONE");
+    sprintf(holder, "|HW:%.4s", gpsdo_state.alarm_hw);
+    u8g2_DrawStr(&u8g2, 81, 55, holder);
+    sprintf(holder, "|OP:%.4s", gpsdo_state.alarm_op);
+    u8g2_DrawStr(&u8g2, 81, 63, holder);
     u8g2_SendBuffer(&u8g2);
-    // } while (u8g2_NextPage(&u8g2));
+    free(holder);
+    holder = NULL;
 }
 
 void satellitesScreen()

@@ -1,7 +1,6 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
-
 void initialize_uccm();
 void statScreen();
 void monitorScreen();
@@ -22,10 +21,10 @@ typedef struct
 // Struct that holds the status data for the GPSDO
 typedef struct
 {
-    char manufacturer[10];
-    char model[10];
-    char serial_number[10];
-    char version[10];
+    char manufacturer[11];
+    char model[11];
+    char serial_number[11];
+    char version[11];
     float temperature;
     float dac;
     float phase;
@@ -37,8 +36,8 @@ typedef struct
     int status_gps;
     int status_pos;
     int status_opr;
-    int alarm_hw;
-    int alarm_op;
+    char alarm_hw[11];
+    char alarm_op[11];
     int week;
     int tow;
     int utc_offset;
