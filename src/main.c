@@ -94,9 +94,9 @@ void app_main()
     {
         ESP_LOGI(TAG, "Failed to create queue_cmd");
     }
-    xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
+    // xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
 
-    xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
+    // xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
 
     xTaskCreate(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL);
 
@@ -259,7 +259,7 @@ static void uart_receive_task(void *pvParameters)
 {
     static const char *TAG = "uart_receive_task";
     uart_event_t event;
-    uint8_t *dtmp = (uint8_t *)malloc(TOD_BUFFER_SIZE);
+    char *dtmp = malloc(TOD_BUFFER_SIZE);
     char *cmd_buffer = malloc(CMD_BUFFER_SIZE);
     char *tod_buffer = malloc(TOD_BUFFER_SIZE);
     char *prompt_pos;
@@ -287,65 +287,62 @@ static void uart_receive_task(void *pvParameters)
                 be full.*/
             case UART_DATA:
                 uart_read_bytes(UART_PORT_NUM, dtmp, event.size, portMAX_DELAY);
-                ESP_LOGI(TAG, "c5_detected: %d", c5_detected);
 
                 // If the c5 has been detected in the previous call, we just get
                 // the rest of the data and notify the parsing function.
-                // if (c5_detected)
-                // {
-                //     // We add 2 to obtain the ca string itself
-                //     ca_pos = strstr((char *)dtmp, "ca") + 2;
-                //     // If ca wasn't received yet, we need to break/leave the function and wait for the next one
-                //     if ((ca_pos == NULL) || (ca_pos > (dtmp + event.size))) {
-                //         ESP_LOGD(TAG, "Skipping found ca_pos due to out of boundaries");
-                //         break;
-                //     }
-                //     memcpy(&tod_buffer[tod_buffer_index], dtmp, ca_pos - (char *)dtmp);
-                //     tod_buffer_index += ca_pos - (char *)dtmp;
-                //     ESP_LOGD(TAG, "TOD contents [%d]: %s", tod_buffer_index, tod_buffer);
-                //     // Sometimes we can get other outputs in the middle of the TOD.
-                //     // If that's the case, discard the data and don't notify the parsing function.
-                //     if (tod_buffer_index == 134)
-                //     {
-                //         // Here notify the parsing task that data is ready
-                //         char *tod_data = malloc(strlen(tod_buffer) + 1);
-                //         strcpy(tod_data, tod_buffer);
-                //         if (xQueueSendToBack(queue_tod, &tod_data, (portTickType)portMAX_DELAY) != pdPASS)
-                //         {
-                //             ESP_LOGE(TAG, "Error sending data to TOD queue");
-                //         }
-                //         xSemaphoreGive(can_send_cmd);
-                //     }
-                //     tod_buffer_index = 0;
-                //     // Zero out the buffer to prevent nastiness
-                //     bzero(tod_buffer, TOD_BUFFER_SIZE);
-                //     c5_detected = false;
+                if (c5_detected)
+                {
+                    // We add 2 to obtain the ca string itself
+                    ca_pos = strstr((char *)dtmp, "ca");
+                    // This is the case where ca_pos is outside of the string. In this case, we bail out.
+                    if (ca_pos >= (dtmp + event.size))
+                    {
+                        ESP_LOGW(TAG, "ca_pos out of boundaries");
+                        break;
+                    }
+                    // If ca wasn't received yet, we need to break/leave the function and wait for the next one
+                    if (ca_pos == NULL)
+                    {
+                        ESP_LOGD(TAG, "ca_pos not found yet. Accumulating.");
+                        break;
+                    }
+                    ca_pos += 2;
+                    memcpy(&tod_buffer[tod_buffer_index], dtmp, ca_pos - (char *)dtmp);
+                    tod_buffer_index += ca_pos - (char *)dtmp;
+                    ESP_LOGD(TAG, "Full TOD size: %d", tod_buffer_index);
+                    // Sometimes we can get other outputs in the middle of the TOD.
+                    // If that's the case, discard the data and don't notify the parsing function.
+                    if (tod_buffer_index == 131)
+                    {
+                        // Here notify the parsing task that data is ready
+                        char *tod_data = malloc(strlen(tod_buffer) + 1);
+                        strcpy(tod_data, tod_buffer);
+                        if (xQueueSendToBack(queue_tod, &tod_data, (portTickType)portMAX_DELAY) != pdPASS)
+                        {
+                            ESP_LOGE(TAG, "Error sending data to TOD queue");
+                        }
+                        xSemaphoreGive(can_send_cmd);
+                    }
+                    tod_buffer_index = 0;
+                    // Zero out the buffer to prevent nastiness
+                    // bzero(tod_buffer, TOD_BUFFER_SIZE);
+                    c5_detected = false;
+                    ESP_LOGD(TAG, "Cleaned up C5 detected");
 
-                //     break;
-                // }
+                    break;
+                }
 
                 // Check if the c5 string is in the buffer. If yes, wait another round and
                 // then ship the data to the parsing function.'
-                ESP_LOGI(TAG, "Data before c5 strstr: %s", dtmp);
                 c5_pos = strstr((char *)dtmp, "c5");
                 if (c5_pos != NULL)
                 {
+                    bzero(tod_buffer, TOD_BUFFER_SIZE);
                     c5_detected = true;
                     ESP_LOGD(TAG, "C5 detected");
-                    if (c5_pos == (char *)dtmp + 3)
-                    {
-                        memcpy(&tod_buffer[0], c5_pos, event.size);
-                        tod_buffer_index = event.size;
-                    }
-                    else
-                    {
-                        int cmd_length = c5_pos - ((char *)dtmp);
-                        memcpy(&cmd_buffer[0], (char *)dtmp, cmd_length);
-                        memcpy(&tod_buffer[0], c5_pos, event.size - cmd_length);
-                        cmd_buffer_index = cmd_length;
-                        tod_buffer_index = event.size - cmd_length;
-                        ESP_LOGD(TAG, "C5 detected");
-                    }
+                    int data_length = event.size - (c5_pos - dtmp);
+                    memcpy(&tod_buffer[0], c5_pos, data_length);
+                    tod_buffer_index = data_length;
                     break;
                 }
 
