@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/uart.h"
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 #include "esp_log.h"
 #include "u8g2.h"
 
@@ -17,18 +18,16 @@
 #include "u8g2_esp32_hal.h"
 
 #define CMD_BUFFER_SIZE (3072)
-#define TOD_BUFFER_SIZE (512)
-#define ECHO_UART_PORT_NUM (UART_NUM_2)
+#define TOD_BUFFER_SIZE (1024)
+#define UART_PORT_NUM (UART_NUM_2)
 
 static void uart_receive_task(void *pvParameters);
-static void tod_parse_task(void *pvParameters);
-static void cmd_parse_task(void *pvParameters);
+static void parse_tod_task(void *pvParameters);
+static void parse_cmd_task(void *pvParameters);
 static void update_display_task(void *pvParameters);
+static void send_cmd_task(void *pvParameters);
 static void uart_init();
 static void display_init();
-
-// Used for debug output
-static const char *TAG = "main";
 
 // The object for the GLCD display
 u8g2_t u8g2;
@@ -37,6 +36,7 @@ u8g2_t u8g2;
 static QueueHandle_t queue_uart2;
 static QueueHandle_t queue_tod;
 static QueueHandle_t queue_cmd;
+static QueueHandle_t can_send_cmd;
 
 // UART message ring buffer
 RingbufHandle_t buf_handle;
@@ -71,32 +71,80 @@ void (*screen_functions[4])(void) = {&monitorScreen, &uccmDataScreen, &satellite
 
 void app_main()
 {
+    static const char *TAG = "main";
+
     display_init();
     uart_init();
 
-    // initialize_uccm();
+    initialize_uccm();
+
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+    can_send_cmd = xSemaphoreCreateBinary();
 
     queue_tod = xQueueCreate(10, sizeof(char *));
     if (queue_tod == NULL)
     {
         ESP_LOGI(TAG, "Failed to create queue_tod");
     }
-    xTaskCreate(tod_parse_task, "tod_parse_task", 10240, NULL, 2, NULL);
+    xTaskCreate(parse_tod_task, "parse_tod_task", 10240, NULL, 6, NULL);
 
     queue_cmd = xQueueCreate(10, sizeof(char *));
     if (queue_cmd == NULL)
     {
         ESP_LOGI(TAG, "Failed to create queue_cmd");
     }
-    xTaskCreate(cmd_parse_task, "cmd_parse_task", 10240, NULL, 2, NULL);
+    xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
 
     xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
 
     xTaskCreate(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL);
+
+    // xTaskCreate(send_cmd_task, "send_cmd_task", 20480, NULL, 2, NULL);
 }
 
-static void cmd_parse_task(void *pvParameters)
+void initialize_uccm()
 {
+    uart_write_bytes(UART_PORT_NUM, "\n", sizeof("\n") - 1);
+    uart_write_bytes(UART_PORT_NUM, "TOD EN\n", sizeof("TOD EN\n") - 1);
+}
+
+static void send_cmd_task(void *pvParameters)
+{
+    static const char *TAG = "send_cmd_task";
+    char *commands[13] = {
+        "*IDN?",
+        "ALAR:HARD?",
+        "ALAR:OPER?",
+        "DIAG:LOOP?",
+        "DIAG:ROSC:EFC:REL?",
+        "DIAG:ROSC:EFC:DATA?",
+        "GPS:POS?",
+        "LED:GPSL?",
+        "OUTP:STAT?",
+        "PULLINRANGE?",
+        "SYNC:FFOM?",
+        "SYNC:TINT?"
+        // "SYST:STAT?"
+    };
+
+    for (;;)
+    {
+        for (int i = 0; i < 13; i++)
+        {
+            xSemaphoreTake(can_send_cmd, portMAX_DELAY);
+            ESP_LOGI(TAG, "Sending command %s", commands[i]);
+            uart_write_bytes(UART_PORT_NUM, commands[i], strlen(commands[i]));
+            uart_write_bytes(UART_PORT_NUM, "\n", sizeof("\n") - 1);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void parse_cmd_task(void *pvParameters)
+{
+    static const char *TAG = "parse_cmd_task";
     char *cmd_data;
     char *lf_pos = NULL;
     char *complete_pos = NULL;
@@ -104,19 +152,19 @@ static void cmd_parse_task(void *pvParameters)
     {
         if (xQueueReceive(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY))
         {
-            // ESP_LOGI(TAG, "cmd data: %s", cmd_data);
+            ESP_LOGI(TAG, "cmd data: %s", cmd_data);
             lf_pos = strstr(cmd_data, "\r\n");
             complete_pos = strstr(cmd_data, "\"Command Complete\"");
             if (lf_pos != NULL)
             {
                 size_t len_cmd = lf_pos - cmd_data;
-                size_t len_data = complete_pos - (lf_pos + 3);
+                size_t len_data = complete_pos - lf_pos;
                 char *command = malloc(len_cmd + 1);
                 char *data = malloc(len_data + 1);
                 bzero(command, len_cmd + 1);
                 bzero(data, len_data + 1);
                 memcpy(command, cmd_data, len_cmd);
-                memcpy(data, (lf_pos + 3), len_data - 2);
+                memcpy(data, lf_pos, len_data);
                 // Parse the received command result
                 parse_command(&gpsdo_state, command, data);
                 free(command);
@@ -129,8 +177,9 @@ static void cmd_parse_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static void tod_parse_task(void *pvParameters)
+static void parse_tod_task(void *pvParameters)
 {
+    static const char *TAG = "parse_tod_task";
     char *tod_data;
     char *s;
     int vals[50];
@@ -193,11 +242,6 @@ static void tod_parse_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-void initialize_uccm()
-{
-    uart_write_bytes(ECHO_UART_PORT_NUM, "TOD EN\r\n", sizeof("TOD EN\r\n"));
-}
-
 static void update_display_task(void *pvParameters)
 {
     for (;;)
@@ -213,16 +257,22 @@ static void update_display_task(void *pvParameters)
 
 static void uart_receive_task(void *pvParameters)
 {
+    static const char *TAG = "uart_receive_task";
     uart_event_t event;
     uint8_t *dtmp = (uint8_t *)malloc(TOD_BUFFER_SIZE);
     char *cmd_buffer = malloc(CMD_BUFFER_SIZE);
     char *tod_buffer = malloc(TOD_BUFFER_SIZE);
     char *prompt_pos;
-    int cmd_buffer_index = 0, tod_buffer_index = 0;
+    char *c5_pos;
+    char *ca_pos;
+    int cmd_buffer_index = 0;
+    int tod_buffer_index = 0;
     bool c5_detected = false;
 
     bzero(tod_buffer, TOD_BUFFER_SIZE);
     bzero(cmd_buffer, CMD_BUFFER_SIZE);
+
+    uart_flush_input(UART_PORT_NUM);
 
     for (;;)
     {
@@ -230,86 +280,110 @@ static void uart_receive_task(void *pvParameters)
         if (xQueueReceive(queue_uart2, (void *)&event, (portTickType)portMAX_DELAY))
         {
             bzero(dtmp, TOD_BUFFER_SIZE);
-            ESP_LOGD(TAG, "uart[%d] event: %d", ECHO_UART_PORT_NUM, event.size);
             switch (event.type)
             {
             /*We'd better handler data event fast, there would be much more data events than
                 other types of events. If we take too much time on data event, the queue might
                 be full.*/
             case UART_DATA:
-                uart_read_bytes(ECHO_UART_PORT_NUM, dtmp, event.size, portMAX_DELAY);
-
-                // Check if the c5 string is in the buffer. If yes, wait another round and
-                // then ship the data to the parsing function.'
-                if (strstr((char *)dtmp, "c5") != NULL)
-                {
-                    c5_detected = true;
-                    memcpy(&tod_buffer[tod_buffer_index], dtmp, event.size);
-                    tod_buffer_index += event.size;
-                    ESP_LOGD(TAG, "C5 detected");
-                    break;
-                }
+                uart_read_bytes(UART_PORT_NUM, dtmp, event.size, portMAX_DELAY);
+                ESP_LOGI(TAG, "c5_detected: %d", c5_detected);
 
                 // If the c5 has been detected in the previous call, we just get
                 // the rest of the data and notify the parsing function.
-                if (c5_detected)
-                {
-                    memcpy(&tod_buffer[tod_buffer_index], dtmp, event.size);
-                    tod_buffer_index += event.size;
-                    ESP_LOGD(TAG, "Rest of TOD [%d]: %s", tod_buffer_index, tod_buffer);
-                    // Sometimes we can get other outputs in the middle of the TOD.
-                    // If that's the case, discard the data and don't notify the parsing function.
-                    if (tod_buffer_index == 135)
-                    {
-                        // Here notify the parsing task that data is ready
-                        char *tod_data = malloc(strlen(tod_buffer) + 1);
-                        strcpy(tod_data, tod_buffer);
-                        if (xQueueSendToBack(queue_tod, &tod_data, (portTickType)portMAX_DELAY) != pdPASS)
-                        {
-                            ESP_LOGE(TAG, "Error sending data to TOD queue");
-                        }
-                    }
-                    tod_buffer_index = 0;
-                    // Zero out the buffer to prevent nastiness
-                    bzero(tod_buffer, TOD_BUFFER_SIZE);
-                    c5_detected = false;
+                // if (c5_detected)
+                // {
+                //     // We add 2 to obtain the ca string itself
+                //     ca_pos = strstr((char *)dtmp, "ca") + 2;
+                //     // If ca wasn't received yet, we need to break/leave the function and wait for the next one
+                //     if ((ca_pos == NULL) || (ca_pos > (dtmp + event.size))) {
+                //         ESP_LOGD(TAG, "Skipping found ca_pos due to out of boundaries");
+                //         break;
+                //     }
+                //     memcpy(&tod_buffer[tod_buffer_index], dtmp, ca_pos - (char *)dtmp);
+                //     tod_buffer_index += ca_pos - (char *)dtmp;
+                //     ESP_LOGD(TAG, "TOD contents [%d]: %s", tod_buffer_index, tod_buffer);
+                //     // Sometimes we can get other outputs in the middle of the TOD.
+                //     // If that's the case, discard the data and don't notify the parsing function.
+                //     if (tod_buffer_index == 134)
+                //     {
+                //         // Here notify the parsing task that data is ready
+                //         char *tod_data = malloc(strlen(tod_buffer) + 1);
+                //         strcpy(tod_data, tod_buffer);
+                //         if (xQueueSendToBack(queue_tod, &tod_data, (portTickType)portMAX_DELAY) != pdPASS)
+                //         {
+                //             ESP_LOGE(TAG, "Error sending data to TOD queue");
+                //         }
+                //         xSemaphoreGive(can_send_cmd);
+                //     }
+                //     tod_buffer_index = 0;
+                //     // Zero out the buffer to prevent nastiness
+                //     bzero(tod_buffer, TOD_BUFFER_SIZE);
+                //     c5_detected = false;
 
+                //     break;
+                // }
+
+                // Check if the c5 string is in the buffer. If yes, wait another round and
+                // then ship the data to the parsing function.'
+                ESP_LOGI(TAG, "Data before c5 strstr: %s", dtmp);
+                c5_pos = strstr((char *)dtmp, "c5");
+                if (c5_pos != NULL)
+                {
+                    c5_detected = true;
+                    ESP_LOGD(TAG, "C5 detected");
+                    if (c5_pos == (char *)dtmp + 3)
+                    {
+                        memcpy(&tod_buffer[0], c5_pos, event.size);
+                        tod_buffer_index = event.size;
+                    }
+                    else
+                    {
+                        int cmd_length = c5_pos - ((char *)dtmp);
+                        memcpy(&cmd_buffer[0], (char *)dtmp, cmd_length);
+                        memcpy(&tod_buffer[0], c5_pos, event.size - cmd_length);
+                        cmd_buffer_index = cmd_length;
+                        tod_buffer_index = event.size - cmd_length;
+                        ESP_LOGD(TAG, "C5 detected");
+                    }
                     break;
                 }
 
                 // In the case of other commands, we just copy data into the buffer
                 // until we get the prompt again.
-                memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
-                cmd_buffer_index += event.size;
+                // ESP_LOGI(TAG, "uart data: %s", dtmp);
+                // memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
+                // cmd_buffer_index += event.size;
 
-                prompt_pos = strstr(cmd_buffer, "UCCM> ");
-                if (prompt_pos != NULL)
-                {
-                    char *cmd_start = cmd_buffer;
-                    // This loop is a trick to split the commands when more than one is received at once and
-                    // send them individually to be processed by the task.
-                    while (prompt_pos != NULL)
-                    {
-                        size_t len = prompt_pos - cmd_start;
-                        char *cmd_data = malloc(len + 1);
-                        bzero(cmd_data, len + 1);
-                        memcpy(cmd_data, cmd_start, len);
-                        if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
-                        {
-                            ESP_LOGE(TAG, "Error sending data to cmd queue");
-                        }
-                        cmd_start += len + 6;
-                        prompt_pos = strstr(cmd_start, "UCCM> ");
-                    }
-                    // Sometimes we get partial commands that don't have the UCCM> part yet, so we get a remaining part.
-                    // This copies the remaining to the start of the array, sets the array index to the length of the remain
-                    // and zero out the rest.
-                    // That way, when we receive the rest, we can still process it as a command.
-                    memcpy(cmd_buffer, cmd_start, strlen(cmd_start));
-                    cmd_buffer_index = strlen(cmd_start);
-                    bzero(&(cmd_buffer[cmd_buffer_index]), CMD_BUFFER_SIZE - cmd_buffer_index);
-                    break;
-                }
+                // prompt_pos = strstr(cmd_buffer, "UCCM> ");
+                // if (prompt_pos != NULL)
+                // {
+                //     char *cmd_start = cmd_buffer;
+                //     // This loop is a trick to split the commands when more than one is received at once and
+                //     // send them individually to be processed by the task.
+                //     while (prompt_pos != NULL)
+                //     {
+                //         size_t len = prompt_pos - cmd_start;
+                //         char *cmd_data = malloc(len + 1);
+                //         bzero(cmd_data, len + 1);
+                //         memcpy(cmd_data, cmd_start, len);
+                //         if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
+                //         {
+                //             ESP_LOGE(TAG, "Error sending data to cmd queue");
+                //         }
+                //         xSemaphoreGive(can_send_cmd);
+                //         cmd_start += len + 6;
+                //         prompt_pos = strstr(cmd_start, "UCCM> ");
+                //     }
+                //     // Sometimes we get partial commands that don't have the UCCM> part yet, so we get a remaining part.
+                //     // This copies the remaining to the start of the array, sets the array index to the length of the remain
+                //     // and zero out the rest.
+                //     // That way, when we receive the rest, we can still process it as a command.
+                //     memcpy(cmd_buffer, cmd_start, strlen(cmd_start));
+                //     cmd_buffer_index = strlen(cmd_start);
+                //     bzero(&(cmd_buffer[cmd_buffer_index]), CMD_BUFFER_SIZE - cmd_buffer_index);
+                //     break;
+                // }
 
                 break;
             //Event of HW FIFO overflow detected
@@ -318,7 +392,7 @@ static void uart_receive_task(void *pvParameters)
                 // If fifo overflow happened, you should consider adding flow control for your application.
                 // The ISR has already reset the rx FIFO,
                 // As an example, we directly flush the rx buffer here in order to read more data.
-                uart_flush_input(ECHO_UART_PORT_NUM);
+                uart_flush_input(UART_PORT_NUM);
                 xQueueReset(queue_uart2);
                 break;
             //Event of UART ring buffer full
@@ -326,7 +400,7 @@ static void uart_receive_task(void *pvParameters)
                 ESP_LOGW(TAG, "ring buffer full");
                 // If buffer full happened, you should consider increasing your buffer size
                 // As an example, we directly flush the rx buffer here in order to read more data.
-                uart_flush_input(ECHO_UART_PORT_NUM);
+                uart_flush_input(UART_PORT_NUM);
                 xQueueReset(queue_uart2);
                 break;
             //Event of UART RX break detected
@@ -369,17 +443,18 @@ static void uart_init()
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_APB,
     };
-    //Install UART driver, and get the queue.
-    ESP_ERROR_CHECK(uart_driver_install(ECHO_UART_PORT_NUM, CMD_BUFFER_SIZE * 2, CMD_BUFFER_SIZE * 2, 20, &queue_uart2, 0));
-    ESP_ERROR_CHECK(uart_param_config(ECHO_UART_PORT_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_param_config(UART_PORT_NUM, &uart_config));
 
     //Set UART pins (using UART0 default pins ie no changes.)
-    ESP_ERROR_CHECK(uart_set_pin(ECHO_UART_PORT_NUM, GPIO_NUM_17, GPIO_NUM_16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_pin(UART_PORT_NUM, GPIO_NUM_17, GPIO_NUM_16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    //Install UART driver, and get the queue.
+    ESP_ERROR_CHECK(uart_driver_install(UART_PORT_NUM, CMD_BUFFER_SIZE * 2, 0, 20, &queue_uart2, 0));
 
     /* Set pattern interrupt, used to detect the end of a line */
-    // ESP_ERROR_CHECK(uart_enable_pattern_det_baud_intr(ECHO_UART_PORT_NUM, '\n', 1, 9, 0, 0));
+    // ESP_ERROR_CHECK(uart_enable_pattern_det_baud_intr(UART_PORT_NUM, '\n', 1, 9, 0, 0));
     /* Set pattern queue size */
-    // ESP_ERROR_CHECK(uart_pattern_queue_reset(ECHO_UART_PORT_NUM, 20));
+    // ESP_ERROR_CHECK(uart_pattern_queue_reset(UART_PORT_NUM, 20));
 }
 
 static void display_init()

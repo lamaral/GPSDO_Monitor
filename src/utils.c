@@ -117,6 +117,8 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         break;
     case 1268528005: /* PULLINRANGE? */
         break;
+    /* SYNC:FFOM? */
+    /* SYNC:TFOM? */
     case 3008337594: /* SYNC:TINT? */
         break;
     case 1831501901: /* SYST:STAT? */
