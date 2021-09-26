@@ -94,13 +94,13 @@ void app_main()
     {
         ESP_LOGI(TAG, "Failed to create queue_cmd");
     }
-    // xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
+    xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
 
-    // xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
+    xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
 
     xTaskCreate(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL);
 
-    // xTaskCreate(send_cmd_task, "send_cmd_task", 20480, NULL, 2, NULL);
+    xTaskCreate(send_cmd_task, "send_cmd_task", 10240, NULL, 2, NULL);
 }
 
 void initialize_uccm()
@@ -189,7 +189,6 @@ static void parse_tod_task(void *pvParameters)
     {
         if (xQueueReceive(queue_tod, &tod_data, (portTickType)portMAX_DELAY))
         {
-            // ESP_LOGI(TAG, "TOD data: %s", tod_data);
             s = strstr(tod_data, "c5 ");
             if (s == 0)
                 goto go_back;
@@ -309,7 +308,7 @@ static void uart_receive_task(void *pvParameters)
                     ca_pos += 2;
                     memcpy(&tod_buffer[tod_buffer_index], dtmp, ca_pos - (char *)dtmp);
                     tod_buffer_index += ca_pos - (char *)dtmp;
-                    ESP_LOGD(TAG, "Full TOD size: %d", tod_buffer_index);
+                    // ESP_LOGD(TAG, "Full TOD [%d]: %s", tod_buffer_index, tod_buffer);
                     // Sometimes we can get other outputs in the middle of the TOD.
                     // If that's the case, discard the data and don't notify the parsing function.
                     if (tod_buffer_index == 131)
@@ -321,11 +320,11 @@ static void uart_receive_task(void *pvParameters)
                         {
                             ESP_LOGE(TAG, "Error sending data to TOD queue");
                         }
-                        xSemaphoreGive(can_send_cmd);
                     }
-                    tod_buffer_index = 0;
                     // Zero out the buffer to prevent nastiness
-                    // bzero(tod_buffer, TOD_BUFFER_SIZE);
+                    tod_buffer_index = 0;
+                    bzero(tod_buffer, TOD_BUFFER_SIZE);
+                    uart_flush_input(UART_PORT_NUM);
                     c5_detected = false;
                     ESP_LOGD(TAG, "Cleaned up C5 detected");
 
@@ -348,7 +347,7 @@ static void uart_receive_task(void *pvParameters)
 
                 // In the case of other commands, we just copy data into the buffer
                 // until we get the prompt again.
-                // ESP_LOGI(TAG, "uart data: %s", dtmp);
+                ESP_LOGI(TAG, "Command data: %s", dtmp);
                 // memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
                 // cmd_buffer_index += event.size;
 
