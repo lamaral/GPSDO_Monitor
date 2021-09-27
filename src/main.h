@@ -1,6 +1,9 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
+#define GPSDO_STATE_DATE_SIZE 12
+#define GPSDO_STATE_TIME_SIZE 13
+
 void initialize_uccm();
 void statScreen();
 void monitorScreen();
@@ -41,6 +44,8 @@ typedef struct
     int week;
     int tow;
     int utc_offset;
+    char date[GPSDO_STATE_DATE_SIZE];
+    char time[GPSDO_STATE_TIME_SIZE];
     float altitude;
     float latitude;
     float longitude;
