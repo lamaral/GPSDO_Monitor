@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <time.h>
 #include <esp_system.h>
 
 #include "freertos/FreeRTOS.h"
@@ -61,6 +62,8 @@ gpsdo_state_t gpsdo_state = {
     .week = 0,
     .tow = 0,
     .utc_offset = 0,
+    .date = "27 Sep 2021",
+    .time = "12:17:00 UTC",
     .altitude = 0.0,
     .latitude = 0.0,
     .longitude = 0.0,
@@ -87,26 +90,28 @@ void app_main()
     {
         ESP_LOGI(TAG, "Failed to create queue_tod");
     }
-    xTaskCreate(parse_tod_task, "parse_tod_task", 10240, NULL, 6, NULL);
+    xTaskCreatePinnedToCore(parse_tod_task, "parse_tod_task", 10240, NULL, 6, NULL, 1);
 
     queue_cmd = xQueueCreate(10, sizeof(char *));
     if (queue_cmd == NULL)
     {
         ESP_LOGI(TAG, "Failed to create queue_cmd");
     }
-    xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
+    xTaskCreatePinnedToCore(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL, 1);
 
-    xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
+    xTaskCreatePinnedToCore(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL, 1);
 
-    xTaskCreate(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL);
+    xTaskCreatePinnedToCore(uart_receive_task, "uart_receive_task", 20480, NULL, 12, NULL, 0);
 
-    xTaskCreate(send_cmd_task, "send_cmd_task", 10240, NULL, 2, NULL);
+    xTaskCreatePinnedToCore(send_cmd_task, "send_cmd_task", 10240, NULL, 2, NULL, 0);
 }
 
 void initialize_uccm()
 {
-    uart_write_bytes(UART_PORT_NUM, "\n", sizeof("\n") - 1);
-    uart_write_bytes(UART_PORT_NUM, "TOD EN\n", sizeof("TOD EN\n") - 1);
+    uart_write_bytes(UART_PORT_NUM, "\r\n", sizeof("\r\n") - 1);
+    uart_write_bytes(UART_PORT_NUM, "\r\n", sizeof("\r\n") - 1);
+    uart_write_bytes(UART_PORT_NUM, "TOD EN\r\n", sizeof("TOD EN\r\n") - 1);
+    uart_write_bytes(UART_PORT_NUM, "\r\n", sizeof("\r\n") - 1);
 }
 
 static void send_cmd_task(void *pvParameters)
@@ -130,7 +135,7 @@ static void send_cmd_task(void *pvParameters)
 
     for (;;)
     {
-        for (int i = 0; i < 13; i++)
+        for (int i = 0; i < 12; i++)
         {
             xSemaphoreTake(can_send_cmd, portMAX_DELAY);
             ESP_LOGI(TAG, "Sending command %s", commands[i]);
@@ -152,7 +157,7 @@ static void parse_cmd_task(void *pvParameters)
     {
         if (xQueueReceive(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY))
         {
-            ESP_LOGI(TAG, "cmd data: %s", cmd_data);
+            ESP_LOGD(TAG, "cmd data: %s", cmd_data);
             lf_pos = strstr(cmd_data, "\r\n");
             complete_pos = strstr(cmd_data, "\"Command Complete\"");
             if (lf_pos != NULL)
@@ -185,6 +190,10 @@ static void parse_tod_task(void *pvParameters)
     int vals[50];
     int i, j = 0;
     uint32_t gpsepoch, utctime;
+    struct tm ts;
+    time_t timestamp;
+
+    // esp_log_level_set(TAG, ESP_LOG_WARN);
     for (;;)
     {
         if (xQueueReceive(queue_tod, &tod_data, (portTickType)portMAX_DELAY))
@@ -208,6 +217,14 @@ static void parse_tod_task(void *pvParameters)
             // UTC Offset contains the leap seconds
             utctime = gpsepoch - gpsdo_state.utc_offset;
             utctime += 315964800;
+
+            timestamp = utctime;
+            ts = *localtime(&timestamp);
+            strftime(gpsdo_state.date, GPSDO_STATE_DATE_SIZE, "%d %b %G", &ts);
+            strftime(gpsdo_state.time, GPSDO_STATE_TIME_SIZE, "%X U", &ts);
+            ESP_LOGD(TAG, "Parsed date: %s", gpsdo_state.date);
+            ESP_LOGD(TAG, "Parsed time: %s", gpsdo_state.time);
+
             ESP_LOGD(TAG, "UTC Time: %d", utctime);
 
             gpsdo_state.week = (int)(gpsepoch / (7 * 24 * 60 * 60));
@@ -286,6 +303,7 @@ static void uart_receive_task(void *pvParameters)
                 be full.*/
             case UART_DATA:
                 uart_read_bytes(UART_PORT_NUM, dtmp, event.size, portMAX_DELAY);
+                ESP_LOGD(TAG, "Rx Data[%d]: %s", event.size, dtmp);
 
                 // If the c5 has been detected in the previous call, we just get
                 // the rest of the data and notify the parsing function.
@@ -302,7 +320,7 @@ static void uart_receive_task(void *pvParameters)
                     // If ca wasn't received yet, we need to break/leave the function and wait for the next one
                     if (ca_pos == NULL)
                     {
-                        ESP_LOGD(TAG, "ca_pos not found yet. Accumulating.");
+                        // ESP_LOGD(TAG, "ca_pos not found yet. Accumulating.");
                         break;
                     }
                     ca_pos += 2;
@@ -321,14 +339,18 @@ static void uart_receive_task(void *pvParameters)
                             ESP_LOGE(TAG, "Error sending data to TOD queue");
                         }
                     }
+                    else
+                    {
+                        ESP_LOGW(TAG, "TOD discarded: sizeupdate %d", tod_buffer_index);
+                    }
                     // Zero out the buffer to prevent nastiness
                     tod_buffer_index = 0;
                     bzero(tod_buffer, TOD_BUFFER_SIZE);
-                    uart_flush_input(UART_PORT_NUM);
                     c5_detected = false;
-                    ESP_LOGD(TAG, "Cleaned up C5 detected");
+                    xSemaphoreGive(can_send_cmd);
+                    // ESP_LOGD(TAG, "Cleaned up C5 detected");
 
-                    break;
+                    // break;
                 }
 
                 // Check if the c5 string is in the buffer. If yes, wait another round and
@@ -338,16 +360,26 @@ static void uart_receive_task(void *pvParameters)
                 {
                     bzero(tod_buffer, TOD_BUFFER_SIZE);
                     c5_detected = true;
-                    ESP_LOGD(TAG, "C5 detected");
+                    // ESP_LOGD(TAG, "C5 detected");
                     int data_length = event.size - (c5_pos - dtmp);
                     memcpy(&tod_buffer[0], c5_pos, data_length);
                     tod_buffer_index = data_length;
+
+                    // This covers the case where there is Command data before the C5
+                    if (c5_pos > dtmp + 3)
+                    {
+                        data_length = c5_pos - dtmp;
+                        memcpy(&cmd_buffer[0], dtmp, data_length);
+                        cmd_buffer_index = data_length;
+                        ESP_LOGD(TAG, "Partial command data[%d]: %s", cmd_buffer_index, cmd_buffer);
+                    }
+
                     break;
                 }
 
                 // In the case of other commands, we just copy data into the buffer
                 // until we get the prompt again.
-                ESP_LOGI(TAG, "Command data: %s", dtmp);
+                // ESP_LOGI(TAG, "Command data: %s", dtmp);
                 // memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
                 // cmd_buffer_index += event.size;
 
@@ -444,6 +476,8 @@ static void uart_init()
     //Set UART pins (using UART0 default pins ie no changes.)
     ESP_ERROR_CHECK(uart_set_pin(UART_PORT_NUM, GPIO_NUM_17, GPIO_NUM_16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
+    // ESP_ERROR_CHECK(uart_set_rx_timeout(UART_PORT_NUM, 52));
+
     //Install UART driver, and get the queue.
     ESP_ERROR_CHECK(uart_driver_install(UART_PORT_NUM, CMD_BUFFER_SIZE * 2, 0, 20, &queue_uart2, 0));
 
@@ -502,7 +536,7 @@ void monitorScreen()
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
     u8g2_DrawStr(&u8g2, 0, 7, "DK2IP GPSDO Monitor");
-    u8g2_DrawStr(&u8g2, 0, 15, "14:53:36U");
+    u8g2_DrawStr(&u8g2, 0, 15, gpsdo_state.time);
     u8g2_DrawStr(&u8g2, 0, 23, "Freq: N/A");
     u8g2_DrawStr(&u8g2, 0, 31, "GPSDO Status");
     u8g2_DrawStr(&u8g2, 0, 39, "OUT: Norm");
@@ -510,7 +544,7 @@ void monitorScreen()
     u8g2_DrawStr(&u8g2, 0, 55, "Pos: Hold");
     u8g2_DrawStr(&u8g2, 0, 63, "OPR: Active");
     // Drawing of right side
-    u8g2_DrawStr(&u8g2, 63, 15, "25 Apr 2020");
+    u8g2_DrawStr(&u8g2, 63, 15, gpsdo_state.date);
     u8g2_DrawStr(&u8g2, 81, 39, "|Alarm");
     u8g2_DrawStr(&u8g2, 81, 47, "|------");
     sprintf(holder, "|HW:%.4s", gpsdo_state.alarm_hw);
@@ -527,6 +561,7 @@ void satellitesScreen()
     // u8g2_FirstPage(&u8g2);
     // do
     // {
+    // char *holder = malloc(24 * sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
@@ -547,13 +582,16 @@ void statScreen()
     // u8g2_FirstPage(&u8g2);
     // do
     // {
+    char *holder = malloc(24 * sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
-    u8g2_DrawStr(&u8g2, 0, 7, "14:53:36 UTC");
-    u8g2_DrawStr(&u8g2, 0, 15, "25 Apr 2020");
-    u8g2_DrawStr(&u8g2, 0, 23, "Week:  2050");
+    u8g2_DrawStr(&u8g2, 0, 7, gpsdo_state.time);
+    u8g2_DrawStr(&u8g2, 0, 15, gpsdo_state.date);
+    sprintf(holder, "Week: %5d", gpsdo_state.week);
+    u8g2_DrawStr(&u8g2, 0, 23, holder);
     u8g2_DrawStr(&u8g2, 0, 31, "Tow: 399234");
+    sprintf(holder, "UTF ofs: %3d", gpsdo_state.utc_offset);
     u8g2_DrawStr(&u8g2, 0, 39, "UTC ofs: 18");
     u8g2_DrawStr(&u8g2, 0, 47, "Alt:+134.300 m");
     u8g2_DrawStr(&u8g2, 0, 55, "Lat:N 22.5446933");
