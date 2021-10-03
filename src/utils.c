@@ -7,9 +7,6 @@
 #include "utils.h"
 #include "esp_log.h"
 
-// Used for debug output
-static const char *TAG = "utils";
-
 uint32_t atohex(char *s)
 {
     uint32_t val;
@@ -40,12 +37,15 @@ unsigned long hash(const char *str)
 
 void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
 {
+    static const char *TAG = "parse_command";
+
     char *data_ptr = data;
     // This is a dirty hack to have a switch for a string.
     // Each string maps into a different long number
+    ESP_LOGD(TAG, "%s: %lu", command, hash(command));
     switch (hash(command))
     {
-    case 186661001: /* *IDN? */
+    case 2088064778: /* *IDN? */
         strncpy(gpsdo_status->manufacturer, strsep(&data_ptr, ","), 10);
         strncpy(gpsdo_status->model, strsep(&data_ptr, ","), 10);
         strncpy(gpsdo_status->serial_number, strsep(&data_ptr, ","), 10);
@@ -55,21 +55,21 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         ESP_LOGD(TAG, "Serial: %s", gpsdo_status->serial_number);
         ESP_LOGD(TAG, "Version: %s", gpsdo_status->version);
         break;
-    case 4019269066: /* ALARM:HARD? */
+    case 4166190878: /* ALARM:HARD? */
         strncpy(gpsdo_status->alarm_hw, data, 10);
         ESP_LOGD(TAG, "H/W Alarm: %s", gpsdo_status->alarm_hw);
         break;
-    case 4028095873: /* ALARM:OPER? */
+    case 4166458357: /* ALARM:OPER? */
         strncpy(gpsdo_status->alarm_op, data, 10);
         ESP_LOGD(TAG, "Oper Alarm: %s", gpsdo_status->alarm_op);
         break;
-    case 1659745101: /* DIAG:LOOP? OCXO is loop Frequency offset*/
+    case 2002553166: /* DIAG:LOOP? OCXO is loop Frequency offset*/
         break;
-    case 3721428495: /* DIAG:ROSC:EFC:REL? AC in percentage */
+    case 1674576848: /* DIAG:ROSC:EFC:REL? AC in percentage */
         break;
-    case 2531318246: /* DIAG:ROSC:EFC:DATA? Unknown*/
+    case 3720921287: /* DIAG:ROSC:EFC:DATA? Unknown*/
         break;
-    case 3591062394: /* GPS:POS? */
+    case 499271643: /* GPS:POS? */
     {
         double sign = 0.0;
         double lat = 0.0;
@@ -111,17 +111,18 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         ESP_LOGD(TAG, "Alt: %f", alt);
         break;
     }
-    case 868344969: /* LED:GPSL? */
+    case 26313482: /* LED:GPSL? */
         break;
-    case 1130846626: /* OUTP:STAT? */
+    case 1465923843: /* OUTP:STAT? */
         break;
-    case 1268528005: /* PULLINRANGE? */
+    case 1470096006: /* PULLINRANGE? */
         break;
-    /* SYNC:FFOM? */
+    case 3995171108: /* SYNC:FFOM? */
+        break;
     /* SYNC:TFOM? */
-    case 3008337594: /* SYNC:TINT? */
+    case 3995677467: /* SYNC:TINT? */
         break;
-    case 1831501901: /* SYST:STAT? */
+    case 2528360014: /* SYST:STAT? */
         break;
     default:
         ESP_LOGI(TAG, "Unhashed command: %s", command);
