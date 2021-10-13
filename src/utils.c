@@ -124,19 +124,19 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
     }
     case 26313482: /* LED:GPSL? */
         /* Locked */
-        ESP_LOGD(TAG, "Data: %s", data);
+        strncpy(gpsdo_status->status_gps, data, 8);
+        ESP_LOGD(TAG, "Data: %s", gpsdo_status->status_gps);
         break;
     case 1465923843: /* OUTP:STAT? */
         /* Normal */
-        ESP_LOGD(TAG, "Data: %s", data);
+        strncpy(gpsdo_status->status_output, data, 8);
+        ESP_LOGD(TAG, "Data: %s", gpsdo_status->status_output);
         break;
     case 1470096006: /* PULLINRANGE? */
         /* Pull-in Range : [30 ppb] */
-        ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 3995171108: /* SYNC:FFOM? */
         /* PLL stabilized */
-        ESP_LOGD(TAG, "Data: %s", data);
         break;
     /* SYNC:TFOM? */
     case 3995677467: /* SYNC:TINT? */
