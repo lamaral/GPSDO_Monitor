@@ -104,7 +104,7 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
 
         gpsdo_status->latitude = lat;
         gpsdo_status->longitude = lon;
-        gpsdo_status->altitude = lat;
+        gpsdo_status->altitude = alt;
 
         ESP_LOGD(TAG, "Lat: %f", lat);
         ESP_LOGD(TAG, "Lon: %f", lon);

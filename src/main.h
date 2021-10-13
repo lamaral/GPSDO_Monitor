@@ -39,10 +39,10 @@ typedef struct
     float freq_diff;
     int tfom;
     int ffom;
-    int status_output;
-    int status_gps;
-    int status_pos;
-    int status_opr;
+    char status_output[11];
+    char status_gps[11];
+    char status_pos[11];
+    char status_opr[11];
     char alarm_hw[11];
     char alarm_op[11];
     int week;
@@ -53,6 +53,8 @@ typedef struct
     float altitude;
     float latitude;
     float longitude;
+    int satellite_trk;
+    int satellite_vis;
     gps_satellite_t satellites[24];
 } gpsdo_state_t;
 

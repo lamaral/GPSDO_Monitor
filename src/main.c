@@ -56,17 +56,17 @@ gpsdo_state_t gpsdo_state = {
     .freq_diff = 0.0,
     .tfom = 0,
     .ffom = 0,
-    .status_output = 0,
-    .status_gps = 0,
-    .status_pos = 0,
-    .status_opr = 0,
+    .status_output = "",
+    .status_gps = "",
+    .status_pos = "",
+    .status_opr = "",
     .alarm_hw = "",
     .alarm_op = "",
     .week = 0,
     .tow = 0,
     .utc_offset = 0,
-    .date = "27 Sep 2021",
-    .time = "12:17:00 UTC",
+    .date = "01 Jan 1970",
+    .time = "00:00:00 U",
     .altitude = 0.0,
     .latitude = 0.0,
     .longitude = 0.0,
@@ -617,15 +617,15 @@ void uccmDataScreen()
     u8g2_DrawStr(&u8g2, 0, 15, holder);
     sprintf(holder, "Temp:%6.3f", gpsdo_state.temperature);
     u8g2_DrawStr(&u8g2, 0, 23, holder);
-    sprintf(holder, "DAC:%+7.4f %%", gpsdo_state.dac);
+    sprintf(holder, "DAC: %+7.4f %%", gpsdo_state.dac);
     u8g2_DrawStr(&u8g2, 0, 31, holder);
-    sprintf(holder, "Phase:%+5.2fns", gpsdo_state.phase);
+    sprintf(holder, "Phase: %+5.2E", gpsdo_state.phase);
     u8g2_DrawStr(&u8g2, 0, 39, holder);
-    sprintf(holder, "PPS:%+7.4fns", gpsdo_state.pps);
+    sprintf(holder, "PPS: %+7.4fns", gpsdo_state.pps);
     u8g2_DrawStr(&u8g2, 0, 47, holder);
-    sprintf(holder, "FREQ DIFF:%5.2f", gpsdo_state.freq_diff);
+    sprintf(holder, "FREQ DIFF: %5.2f", gpsdo_state.freq_diff);
     u8g2_DrawStr(&u8g2, 0, 55, holder);
-    sprintf(holder, "TFOM:%d FFOM:%d", gpsdo_state.tfom, gpsdo_state.ffom);
+    sprintf(holder, "TFOM: %d FFOM: %d", gpsdo_state.tfom, gpsdo_state.ffom);
     u8g2_DrawStr(&u8g2, 0, 63, holder);
     u8g2_SendBuffer(&u8g2);
     free(holder);
@@ -642,10 +642,14 @@ void monitorScreen()
     u8g2_DrawStr(&u8g2, 0, 15, gpsdo_state.time);
     u8g2_DrawStr(&u8g2, 0, 23, "Freq: N/A");
     u8g2_DrawStr(&u8g2, 0, 31, "GPSDO Status");
-    u8g2_DrawStr(&u8g2, 0, 39, "OUT: Norm");
-    u8g2_DrawStr(&u8g2, 0, 47, "GPS: Lock");
-    u8g2_DrawStr(&u8g2, 0, 55, "Pos: Hold");
-    u8g2_DrawStr(&u8g2, 0, 63, "OPR: Active");
+    sprintf(holder, "OUT: %.8s", gpsdo_state.status_output);
+    u8g2_DrawStr(&u8g2, 0, 39, holder);
+    sprintf(holder, "GPS: %.8s", gpsdo_state.status_gps);
+    u8g2_DrawStr(&u8g2, 0, 47, holder);
+    sprintf(holder, "Pos: %.8s", gpsdo_state.status_pos);
+    u8g2_DrawStr(&u8g2, 0, 55, holder);
+    sprintf(holder, "OPR: %.8s", gpsdo_state.status_opr);
+    u8g2_DrawStr(&u8g2, 0, 63, holder);
     // Drawing of right side
     u8g2_DrawStr(&u8g2, 63, 15, gpsdo_state.date);
     u8g2_DrawStr(&u8g2, 81, 39, "|Alarm");
@@ -661,31 +665,31 @@ void monitorScreen()
 
 void satellitesScreen()
 {
-    // u8g2_FirstPage(&u8g2);
-    // do
-    // {
-    // char *holder = malloc(24 * sizeof(char));
+    char *holder = malloc(24 * sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
-    u8g2_DrawStr(&u8g2, 0, 7, "Tracking: 30");
-    u8g2_DrawStr(&u8g2, 0, 15, "Visible: 10");
+    sprintf(holder, "Tracking: %d", gpsdo_state.satellite_trk);
+    u8g2_DrawStr(&u8g2, 0, 7, holder);
+    sprintf(holder, "Visible: %d", gpsdo_state.satellite_vis);
+    u8g2_DrawStr(&u8g2, 0, 15, holder);
     u8g2_DrawStr(&u8g2, 0, 23, " PRN E1  AZ  C/N Sig.");
-    u8g2_DrawStr(&u8g2, 0, 31, "  2  57  33   42  42");
-    u8g2_DrawStr(&u8g2, 0, 39, "  5  57 336   50  50");
-    u8g2_DrawStr(&u8g2, 0, 47, " 15  23 206   36  36");
-    u8g2_DrawStr(&u8g2, 0, 55, " 19  22 149  N/A  --");
-    u8g2_DrawStr(&u8g2, 0, 63, " 25  13 274  N/A  --");
+    // for (int i = 0; i < MIN(gpsdo_state.satellite_trk, 5); i++)
+    for (int i = 0; i < 5; i++)
+    {
+        u8g2_DrawStr(&u8g2, 0, (31 + i * 8), " 00  00 000  000  00");
+    }
+    // u8g2_DrawStr(&u8g2, 0, 31, "  2  57  33   42  42");
+    // u8g2_DrawStr(&u8g2, 0, 39, "  5  57 336   50  50");
+    // u8g2_DrawStr(&u8g2, 0, 47, " 15  23 206   36  36");
+    // u8g2_DrawStr(&u8g2, 0, 55, " 19  22 149  N/A  --");
+    // u8g2_DrawStr(&u8g2, 0, 63, " 25  13 274  N/A  --");
     u8g2_SendBuffer(&u8g2);
-    // } while (u8g2_NextPage(&u8g2));
 }
 
 void statScreen()
 {
-    // u8g2_FirstPage(&u8g2);
-    // do
-    // {
-    char *holder = malloc(24 * sizeof(char));
+    char *holder = calloc(24, sizeof(char));
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x12_tf);
     // Drawing of left side
@@ -693,18 +697,23 @@ void statScreen()
     u8g2_DrawStr(&u8g2, 0, 15, gpsdo_state.date);
     sprintf(holder, "Week: %5d", gpsdo_state.week);
     u8g2_DrawStr(&u8g2, 0, 23, holder);
-    u8g2_DrawStr(&u8g2, 0, 31, "Tow: 399234");
+    u8g2_DrawStr(&u8g2, 0, 31, "Tow: 000000");
     sprintf(holder, "UTF ofs: %3d", gpsdo_state.utc_offset);
-    u8g2_DrawStr(&u8g2, 0, 39, "UTC ofs: 18");
-    u8g2_DrawStr(&u8g2, 0, 47, "Alt:+134.300 m");
-    u8g2_DrawStr(&u8g2, 0, 55, "Lat:N 22.5446933");
-    u8g2_DrawStr(&u8g2, 0, 63, "Lon:E 114.0800450");
+    u8g2_DrawStr(&u8g2, 0, 39, holder);
+    sprintf(holder, "Alt: %+6.3f m", gpsdo_state.altitude);
+    u8g2_DrawStr(&u8g2, 0, 47, holder);
+    sprintf(holder, "Lat: %+2.7f", gpsdo_state.latitude);
+    u8g2_DrawStr(&u8g2, 0, 55, holder);
+    sprintf(holder, "Lon: %+2.7f", gpsdo_state.longitude);
+    u8g2_DrawStr(&u8g2, 0, 63, holder);
     // Drawing of right side
     u8g2_DrawStr(&u8g2, 81, 7, "GPS STAT");
-    u8g2_DrawStr(&u8g2, 81, 15, "OUT:Norm");
-    u8g2_DrawStr(&u8g2, 81, 23, "GPS:Lock");
-    u8g2_DrawStr(&u8g2, 81, 31, "Pos:Hold");
+    sprintf(holder, "OUT:%.4s", gpsdo_state.status_output);
+    u8g2_DrawStr(&u8g2, 81, 15, holder);
+    sprintf(holder, "GPS:%.4s", gpsdo_state.status_gps);
+    u8g2_DrawStr(&u8g2, 81, 23, holder);
+    sprintf(holder, "Pos:%.4s", gpsdo_state.status_pos);
+    u8g2_DrawStr(&u8g2, 81, 31, holder);
     u8g2_DrawStr(&u8g2, 81, 39, "Stable");
     u8g2_SendBuffer(&u8g2);
-    // } while (u8g2_NextPage(&u8g2));
 }
