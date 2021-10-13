@@ -573,11 +573,12 @@ static void initialize_uart()
         .source_clk = UART_SCLK_APB,
     };
     // Command UART Initialization
-    ESP_ERROR_CHECK(uart_param_config(CMD_PORT_NUM, &uart_config));
-    //Set UART pins
-    ESP_ERROR_CHECK(uart_set_pin(CMD_PORT_NUM, GPIO_NUM_17, GPIO_NUM_16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    //Install UART driver, and get the queue.
+    // Install UART driver, and get the queue.
     ESP_ERROR_CHECK(uart_driver_install(CMD_PORT_NUM, CMD_BUFFER_SIZE * 2, 0, 20, &queue_uart_cmd, 0));
+    // Set configuration
+    ESP_ERROR_CHECK(uart_param_config(CMD_PORT_NUM, &uart_config));
+    // Set UART pins
+    ESP_ERROR_CHECK(uart_set_pin(CMD_PORT_NUM, GPIO_NUM_17, GPIO_NUM_16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
     // TOD UART Initialization
     ESP_ERROR_CHECK(uart_param_config(TOD_PORT_NUM, &uart_config));
@@ -585,10 +586,6 @@ static void initialize_uart()
     ESP_ERROR_CHECK(uart_set_pin(TOD_PORT_NUM, GPIO_NUM_26, GPIO_NUM_25, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     //Install UART driver, and get the queue.
     ESP_ERROR_CHECK(uart_driver_install(TOD_PORT_NUM, TOD_BUFFER_SIZE * 2, 0, 20, &queue_uart_tod, 0));
-    /* Set pattern interrupt, used to detect the end of a line */
-    // ESP_ERROR_CHECK(uart_enable_pattern_det_baud_intr(CMD_PORT_NUM, '\n', 1, 9, 0, 0));
-    /* Set pattern queue size */
-    // ESP_ERROR_CHECK(uart_pattern_queue_reset(CMD_PORT_NUM, 20));
 }
 
 static void initialize_display()
