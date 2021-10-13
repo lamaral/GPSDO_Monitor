@@ -144,11 +144,146 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 2528360014: /* SYST:STAT? */
+        parse_status(gpsdo_status, data);
         break;
     default:
         ESP_LOGI(TAG, "Unhashed command: %s", command);
         ESP_LOGI(TAG, "Hash: %lu", hash(command));
         ESP_LOGI(TAG, "Data: %s", data);
         break;
+    }
+}
+
+void parse_status(gpsdo_state_t *gpsdo_status, char *data)
+{
+    static const char *TAG = "parse_status";
+
+    int counter = 0;
+
+    char *found;
+    char *data_ptr = data;
+    while ((found = strsep(&data_ptr, "\n")) != NULL)
+    {
+        switch (counter++)
+        {
+        case 5:
+            /* TFOM     0            FFOM      0 */
+            {
+                char *start;
+                char *end;
+                char *string;
+                int length = 0;
+                start = strstr(found, "TFOM") + 7;
+                end = start + 6;
+                length = end - start;
+                string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->tfom = atoi(string);
+                    ESP_LOGD(TAG, "TFOM: %d", gpsdo_status->tfom);
+                }
+
+                start = strstr(found, "FFOM") + 5;
+                end = start + 6;
+                length = end - start;
+                string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->ffom = atoi(string);
+                    ESP_LOGD(TAG, "FFOM: %d", gpsdo_status->ffom);
+                }
+                continue;
+            }
+
+        case 8:
+            /* >>GPS :     [phase : -4.714E-10] */
+            {
+                char *start = strstr(found, "phase : ") + 8;
+                char *end = strchr(found, ']');
+                int length = end - start;
+                char *string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->phase = atof(string);
+                    ESP_LOGD(TAG, "Phase: %3.3E", gpsdo_status->phase);
+                }
+                else
+                {
+                    ESP_LOGD(TAG, "Start: %p End: %p Length: %d", start, end, length);
+                }
+                continue;
+            }
+        case 9:
+            /* ACQUISITION ................................................ [ GPS 1PPS Valid ] */
+            continue;
+        case 10:
+            /* Tracking:  7 ___   Not Tracking:  5 _______   Time ____________________________ */
+            {
+                char *start;
+                char *end;
+                char *string;
+                int length = 0;
+                start = strstr(found, "Tracking:") + 9;
+                end = strchr(found, '_');
+                length = end - start;
+                string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->satellite_trk = atoi(string);
+                    ESP_LOGD(TAG, "Tracking: %d", gpsdo_status->satellite_trk);
+                }
+
+                start = strstr(end, "Tracking:") + 9;
+                end = strchr(start, '_');
+                length = end - start;
+                string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->satellite_vis = gpsdo_status->satellite_trk + atoi(string);
+                    ESP_LOGD(TAG, "Visible: %d", gpsdo_status->satellite_vis);
+                }
+
+                continue;
+            }
+        case 11:
+            /* PRN  El  AZ  CNO   PRN  El  Az                GPS      09:23:09     13 OCT 2021 */
+            continue;
+        case 12:
+        case 13:
+        case 14:
+        case 15:
+        case 16:
+        case 17:
+        case 18:
+            /* These are the lines possibly containing GPS info */
+            /* 1  63 139  50      6   6 304                GPS      Synchronized to UTC */
+            continue;
+        case 24:
+            /* ELEV MASK  5 deg                              ANT V=5.112V, I=24.400mA */
+            continue;
+        case 26:
+            /* Temp = 37.000 / NONE */
+            {
+                char *start = strstr(found, "Temp =") + 6;
+                char *end = strchr(found, '/');
+                int length = end - start;
+                char *string = calloc(length + 1, sizeof(char));
+                if ((start != NULL) && (end != NULL) && (length > 0))
+                {
+                    memcpy(string, start, length);
+                    gpsdo_status->temperature = atof(string);
+                    ESP_LOGD(TAG, "Temperature: %2.3f", gpsdo_status->temperature);
+                }
+                continue;
+            }
+        default:
+            ESP_LOGD(TAG, "Xableta");
+            continue;
+        }
     }
 }
