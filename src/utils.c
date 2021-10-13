@@ -64,10 +64,21 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         ESP_LOGD(TAG, "Oper Alarm: %s", gpsdo_status->alarm_op);
         break;
     case 2002553166: /* DIAG:LOOP? OCXO is loop Frequency offset*/
+        /*
+        OCXO : +1.706E-8
+        EXT : Unavailable
+        */
+        // ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 1674576848: /* DIAG:ROSC:EFC:REL? AC in percentage */
+    {
+        gpsdo_status->dac = atof(data);
+        ESP_LOGD(TAG, "DAC: %f", gpsdo_status->dac);
         break;
+    }
     case 3720921287: /* DIAG:ROSC:EFC:DATA? Unknown*/
+        /* +1.700E-8 */
+        // ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 499271643: /* GPS:POS? */
     {
@@ -112,15 +123,25 @@ void parse_command(gpsdo_state_t *gpsdo_status, char *command, char *data)
         break;
     }
     case 26313482: /* LED:GPSL? */
+        /* Locked */
+        ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 1465923843: /* OUTP:STAT? */
+        /* Normal */
+        ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 1470096006: /* PULLINRANGE? */
+        /* Pull-in Range : [30 ppb] */
+        ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 3995171108: /* SYNC:FFOM? */
+        /* PLL stabilized */
+        ESP_LOGD(TAG, "Data: %s", data);
         break;
     /* SYNC:TFOM? */
     case 3995677467: /* SYNC:TINT? */
+        /* -7.229E-10 */
+        ESP_LOGD(TAG, "Data: %s", data);
         break;
     case 2528360014: /* SYST:STAT? */
         break;

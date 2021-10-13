@@ -159,21 +159,16 @@ static void send_cmd_task(void *pvParameters)
         "SYNC:TINT?",
         "SYST:STAT?"};
 
-    uart_write_bytes(CMD_PORT_NUM, "\n", sizeof("\n") - 1);
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-
     for (;;)
     {
         for (int i = 0; i < 13; i++)
         {
+            // xSemaphoreTake(can_send_cmd, portMAX_DELAY);
             ESP_LOGD(TAG, "Sending command %s", commands[i]);
             uart_write_bytes(CMD_PORT_NUM, commands[i], strlen(commands[i]));
             uart_write_bytes(CMD_PORT_NUM, "\n", sizeof("\n") - 1);
-            vTaskDelay(3000 / portTICK_PERIOD_MS);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
-        // uart_write_bytes(CMD_PORT_NUM, commands[12], strlen(commands[12]));
-        // uart_write_bytes(CMD_PORT_NUM, "\n", sizeof("\n") - 1);
-        // vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
     vTaskDelete(NULL);
 }
@@ -200,9 +195,10 @@ static void parse_cmd_task(void *pvParameters)
                 {
                     ESP_LOGW(TAG, "len_cmd is invalid: %d", len_cmd);
                 }
-                mark_pos += 4;
-                // Then len_data is calculated from the incresed ? position,
+                // We increase ? position (mark_pos) and decrease complete_pos
                 // to skip the line feeds and carriage returns
+                mark_pos += 4;
+                complete_pos -= 2;
                 size_t len_data = complete_pos - mark_pos;
                 if (len_data <= 0)
                 {
@@ -214,10 +210,13 @@ static void parse_cmd_task(void *pvParameters)
                 memcpy(command, cmd_data, len_cmd);
                 memcpy(data, mark_pos, len_data);
                 // Parse the received command result
-                // parse_command(&gpsdo_state, command, data);
-                // ESP_LOGD(TAG, "Received command %s", command);
-                // free(command);
+                parse_command(&gpsdo_state, command, data);
+                ESP_LOGD(TAG, "Received command %s", command);
+                ESP_LOGD(TAG, "Received data %s", data);
+                free(command);
                 free(data);
+                command = NULL;
+                data = NULL;
             }
             free(cmd_data);
             cmd_data = NULL;
@@ -308,73 +307,96 @@ static void update_display_task(void *pvParameters)
 static void uart_receive_cmd_task(void *pvParameters)
 {
     static const char *TAG = "uart_receive_cmd";
+    esp_log_level_set(TAG, ESP_LOG_INFO);
 
     uart_event_t event;
 
     int cmd_buffer_index = 0;
 
     char *prompt_pos;
+    char *cmd_pos;
+    bool cmd_detected = false;
     char *dtmp = malloc(CMD_BUFFER_SIZE);
     char *cmd_buffer = malloc(CMD_BUFFER_SIZE);
     bzero(dtmp, CMD_BUFFER_SIZE);
     bzero(cmd_buffer, CMD_BUFFER_SIZE);
 
     uart_flush_input(CMD_PORT_NUM);
+    // xSemaphoreGive(can_send_cmd);
 
     for (;;)
     {
-        if (xQueueReceive(queue_uart_cmd, (void *)&event, (portTickType)portMAX_DELAY))
+        if (xQueueReceive(queue_uart_cmd, (void *)&event, (portTickType)portMAX_DELAY) == pdTRUE)
         {
+            bzero(dtmp, CMD_BUFFER_SIZE);
             switch (event.type)
             {
             /*We'd better handler data event fast, there would be much more data events than
                 other types of events. If we take too much time on data event, the queue might
                 be full.*/
             case UART_DATA:
-                bzero(dtmp, CMD_BUFFER_SIZE);
-                uart_read_bytes(CMD_PORT_NUM, dtmp, event.size, portMAX_DELAY);
-                // ESP_LOGD(TAG, "Rx Data[%d]: %s", event.size, dtmp);
+                uart_read_bytes(CMD_PORT_NUM, dtmp, event.size, 10 / portTICK_RATE_MS);
 
-                memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
-                cmd_buffer_index += event.size;
-
-                prompt_pos = strstr(cmd_buffer, "UCCM> ");
-                if (prompt_pos != NULL)
+                // If the ? has been detected in the previous call, we just get
+                // the rest of the data and notify the parsing function.
+                if (cmd_detected)
                 {
-                    char *cmd_start = cmd_buffer;
-                    // This loop is a trick to split the commands when more than one is received at once and
-                    // send them individually to be processed by the task.
-                    while (prompt_pos != NULL)
+                    memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
+                    cmd_buffer_index += event.size;
+
+                    prompt_pos = strstr(cmd_buffer, "UCCM> ");
+                    if (prompt_pos != NULL)
                     {
-                        size_t len = prompt_pos - cmd_start;
-                        char *cmd_data = calloc(len + 1, sizeof(char));
-                        memcpy(cmd_data, cmd_start, len);
+                        int cmd_data_length = prompt_pos - cmd_buffer;
+                        char *cmd_data = calloc(cmd_data_length + 1, sizeof(char));
+                        memcpy(cmd_data, cmd_buffer, cmd_data_length);
+                        ESP_LOGD(TAG, "Complex send [%d]: %s", cmd_data_length, cmd_data);
                         if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
                         {
                             ESP_LOGE(TAG, "Error sending data to cmd queue");
                         }
-                        cmd_start += len + 6;
-                        prompt_pos = strstr(cmd_start, "UCCM> ");
-                    }
-                    if (cmd_start == cmd_buffer)
-                    {
+                        // xSemaphoreGive(can_send_cmd);
+                        // Zero out the buffer to prevent nastiness
                         cmd_buffer_index = 0;
-                        bzero(cmd_buffer, CMD_BUFFER_SIZE);
+                        bzero(cmd_buffer, TOD_BUFFER_SIZE);
+                        cmd_detected = false;
                     }
-                    else
-                    {
-                        ESP_LOGD(TAG, "cmd_start: %s", cmd_start);
-                    }
-                    // Sometimes we get partial commands that don't have the UCCM> part yet, so we get a remaining part.
-                    // This copies the remaining to the start of the array, sets the array index to the length of the remain
-                    // and zero out the rest.
-                    // That way, when we receive the rest, we can still process it as a command.
-                    // memcpy(cmd_buffer, cmd_start, strlen(cmd_start));
-                    // cmd_buffer_index = strlen(cmd_start);
-                    // bzero(&(cmd_buffer[cmd_buffer_index]), CMD_BUFFER_SIZE - cmd_buffer_index);
                     break;
                 }
 
+                cmd_pos = strchr(dtmp, '?');
+                prompt_pos = strstr(dtmp, "UCCM> ");
+                if (cmd_pos != NULL)
+                {
+                    int cmd_length = cmd_pos - dtmp;
+                    if ((cmd_length < 4) || (cmd_length > 18))
+                    {
+                        ESP_LOGW(TAG, "Illegal cmd_length: %d", cmd_length);
+                        // xSemaphoreGive(can_send_cmd);
+                        break;
+                    }
+
+                    if (prompt_pos != NULL)
+                    {
+                        int cmd_data_length = prompt_pos - dtmp;
+                        char *cmd_data = calloc(cmd_data_length + 1, sizeof(char));
+                        memcpy(cmd_data, dtmp, cmd_data_length);
+                        ESP_LOGD(TAG, "Simple send: %s", cmd_data);
+                        if (xQueueSendToBack(queue_cmd, &cmd_data, (portTickType)portMAX_DELAY) != pdPASS)
+                        {
+                            ESP_LOGE(TAG, "Error sending data to cmd queue");
+                        }
+                        // xSemaphoreGive(can_send_cmd);
+                        break;
+                    }
+                    else
+                    {
+                        cmd_detected = true;
+                        memcpy(&cmd_buffer[cmd_buffer_index], dtmp, event.size);
+                        cmd_buffer_index = event.size;
+                        break;
+                    }
+                }
                 break;
             //Event of HW FIFO overflow detected
             case UART_FIFO_OVF:
@@ -405,9 +427,9 @@ static void uart_receive_cmd_task(void *pvParameters)
             case UART_FRAME_ERR:
                 ESP_LOGW(TAG, "uart frame error");
                 break;
-                //UART_PATTERN_DET
             //Others
             default:
+                ESP_LOGE(TAG, "Undefined event: %d", event.type);
                 break;
             }
         }
