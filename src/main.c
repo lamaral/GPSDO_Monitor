@@ -511,6 +511,10 @@ static void uart_receive_tod_task(void *pvParameters)
                                 ESP_LOGE(TAG, "Error sending data to TOD queue");
                             }
                         }
+                        else
+                        {
+                            ESP_LOGW(TAG, "Received TOD with incorrect packet size: %d", tod_buffer_index);
+                        }
                     }
 
                     // Zero out the buffer to prevent nastiness
