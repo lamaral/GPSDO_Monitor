@@ -137,7 +137,8 @@ void initialize_uccm()
     // uart_write_bytes(CMD_PORT_NUM, "GPS:SAT:TRAC:EMAN 20\n", sizeof("GPS:SAT:TRAC:EMAN 20\n") - 1);
     // vTaskDelay(100 / portTICK_PERIOD_MS);
     uart_write_bytes(CMD_PORT_NUM, "\n", sizeof("\n") - 1);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    uart_flush_input(CMD_PORT_NUM);
 }
 
 static void send_cmd_task(void *pvParameters)
