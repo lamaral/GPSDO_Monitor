@@ -4,6 +4,10 @@
 #define GPSDO_STATE_DATE_SIZE 12
 #define GPSDO_STATE_TIME_SIZE 13
 
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
+
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 void initialize_uccm();
 void statScreen();
 void monitorScreen();

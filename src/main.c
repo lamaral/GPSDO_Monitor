@@ -10,7 +10,6 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/uart.h"
-#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 #include "esp_log.h"
 #include "u8g2.h"
 
@@ -30,8 +29,8 @@ static void parse_tod_task(void *pvParameters);
 static void parse_cmd_task(void *pvParameters);
 static void update_display_task(void *pvParameters);
 static void send_cmd_task(void *pvParameters);
-static void uart_init();
-static void display_init();
+static void initialize_uart();
+static void initialize_display();
 
 // The object for the GLCD display
 u8g2_t u8g2;
@@ -41,7 +40,7 @@ static QueueHandle_t queue_uart_cmd;
 static QueueHandle_t queue_uart_tod;
 static QueueHandle_t queue_cmd;
 static QueueHandle_t queue_tod;
-static QueueHandle_t can_send_cmd;
+static SemaphoreHandle_t can_send_cmd;
 
 // UART message ring buffer
 RingbufHandle_t buf_handle;
@@ -80,33 +79,43 @@ void app_main()
 {
     static const char *TAG = "main";
 
-    display_init();
-    uart_init();
+    initialize_display();
+    initialize_uart();
 
     initialize_uccm();
 
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Initialization complete. Waiting before creating tasks.");
 
-    queue_tod = xQueueCreate(10, sizeof(char *));
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    uart_flush_input(CMD_PORT_NUM);
+
+    queue_tod = xQueueCreate(20, sizeof(char *));
     if (queue_tod == NULL)
     {
-        ESP_LOGI(TAG, "Failed to create queue_tod");
+        ESP_LOGE(TAG, "Failed to create queue_tod");
     }
-    xTaskCreate(parse_tod_task, "parse_tod_task", 10240, NULL, 6, NULL);
 
-    queue_cmd = xQueueCreate(10, sizeof(char *));
+    queue_cmd = xQueueCreate(20, sizeof(char *));
     if (queue_cmd == NULL)
     {
-        ESP_LOGI(TAG, "Failed to create queue_cmd");
+        ESP_LOGE(TAG, "Failed to create queue_cmd");
     }
-    xTaskCreate(parse_cmd_task, "parse_cmd_task", 10240, NULL, 3, NULL);
 
-    xTaskCreate(update_display_task, "updateDisplayTask", 10240, NULL, 1, NULL);
+    can_send_cmd = xSemaphoreCreateBinary();
+    if (can_send_cmd == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create can_send_cmd");
+    }
 
-    xTaskCreate(uart_receive_tod_task, "uart_receive_tod_task", 20480, NULL, 12, NULL);
-    xTaskCreate(uart_receive_cmd_task, "uart_receive_cmd_task", 20480, NULL, 11, NULL);
+    xTaskCreate(parse_tod_task, "parse_tod_task", 2048, NULL, 6, NULL);
+    xTaskCreate(parse_cmd_task, "parse_cmd_task", 2048, NULL, 3, NULL);
 
-    xTaskCreate(send_cmd_task, "send_cmd_task", 10240, NULL, 2, NULL);
+    xTaskCreate(update_display_task, "updateDisplayTask", 2048, NULL, 1, NULL);
+
+    xTaskCreate(uart_receive_tod_task, "uart_receive_tod_task", 2048, NULL, 12, NULL);
+    xTaskCreate(uart_receive_cmd_task, "uart_receive_cmd_task", 2048, NULL, 11, NULL);
+
+    xTaskCreate(send_cmd_task, "send_cmd_task", 2048, NULL, 2, NULL);
 }
 
 void initialize_uccm()
@@ -550,7 +559,7 @@ static void uart_receive_tod_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static void uart_init()
+static void initialize_uart()
 {
     /* Configure parameters of an UART driver,
      * communication pins and install the driver */
@@ -581,7 +590,7 @@ static void uart_init()
     // ESP_ERROR_CHECK(uart_pattern_queue_reset(CMD_PORT_NUM, 20));
 }
 
-static void display_init()
+static void initialize_display()
 {
     u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
     u8g2_esp32_hal.clk = GPIO_NUM_14;
